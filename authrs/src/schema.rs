@@ -14,7 +14,7 @@ table! {
 
 table! {
     users (id) {
-        id -> Nullable<Integer>,
+        id -> Integer,
         login_provider -> Nullable<Text>,
         login -> Text,
         name -> Text,

@@ -8,12 +8,13 @@ extern crate rocket_contrib;
 #[macro_use] extern crate serde_derive;
 extern crate time;
 extern crate cookie;
+extern crate serde_json;
 
 use std::env;
 use diesel::prelude::*;
 
 use dotenv::dotenv;
-use reqwest::header::ACCEPT;
+use reqwest::header::{ACCEPT, AUTHORIZATION};
 use time::Duration;
 use std::ops::Add;
 
@@ -124,12 +125,21 @@ fn index(mut cookies: Cookies, db: DbConn, env: State<Environment>) -> String {
     };
 
     if let Some(uid) = maybe_uid {
+        let user_name = {
+            use authrs::schema::users::dsl::*;
+            users
+                .filter(id.eq(uid))
+                .select(name)
+                .first::<String>(&db.0)
+                .unwrap()
+        };
+
         format!(
-            "Hello User {}", uid
+            "Hello {}!", user_name
         )
     } else {
         format!(
-            "Login: https://github.com/login/oauth/authorize?scope=user:email&client_id={}",
+            "Login: https://github.com/login/oauth/authorize?client_id={}",
             env.github_client_id()
         )
     }
@@ -143,6 +153,8 @@ fn callback(
     env: State<Environment>
 ) -> Redirect {
     let client = reqwest::Client::new();
+
+    // TODO: handle 401, 403
     let res: AccessToken = client.post("https://github.com/login/oauth/access_token")
         .form(&[
             ("client_id", env.github_client_id()),
@@ -155,10 +167,45 @@ fn callback(
         .json()
         .unwrap();
 
+    let user_info: serde_json::Value = client
+        .get("https://api.github.com/user")
+        .header(ACCEPT, "Accept: application/vnd.github.v3+json")
+        .header(AUTHORIZATION, format!("token {}", &res.access_token))
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+
+    let login_name = user_info.get("login").unwrap().as_str().unwrap();
+
+    let maybe_user_id: QueryResult<i32> = {
+        use authrs::schema::users::dsl::*;
+        users
+            .filter(login.eq(login_name))
+            .filter(login_provider.eq("github"))
+            .select(id)
+            .first::<i32>(&db.0)
+    };
+
+    let user_id_ = maybe_user_id.unwrap_or_else(|err|{ // TODO: check Err(NotFound)
+        // register user
+        use authrs::schema::users::dsl::*;
+
+        let new_user = (login_provider.eq("github"), login.eq(login_name), name.eq(login_name));
+        insert_into(users).values(&new_user).execute(&db.0).unwrap();
+
+        users
+            .filter(login.eq(login_name))
+            .filter(login_provider.eq("github"))
+            .select(id)
+            .first::<i32>(&db.0)
+            .unwrap()
+    });
+
     {
         use authrs::schema::sessions::dsl::*;
 
-        let new_session = (token.eq(&res.access_token), expires.eq(0), user_id.eq(0)); // TODO: get user id, expires
+        let new_session = (token.eq(&res.access_token), expires.eq(0), user_id.eq(user_id_)); // TODO: expires
         insert_into(sessions).values(&new_session).execute(&db.0).unwrap();
     }
 

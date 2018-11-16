@@ -1,8 +1,10 @@
 CREATE TABLE users (
-  id INTEGER PRIMARY KEY,
+  id INTEGER NOT NULL PRIMARY KEY,
   login_provider TEXT,
   login TEXT NOT NULL,
-  name TEXT NOT NULL
+  name TEXT NOT NULL,
+
+  UNIQUE(login)
 );
 
 CREATE TABLE sessions (
