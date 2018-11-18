@@ -4,5 +4,7 @@
 extern crate rocket;
 extern crate dotenv;
 
+pub struct UserId(pub i32);
+
 pub mod db_connection;
 pub mod schema;
